@@ -125,7 +125,7 @@ $summary = (new CDiv([
 	(new CDiv([(new CDiv((string) ($stats['exp_soon'] ?? 0)))->setAttribute('style', 'font-size:22px;font-weight:bold;color:#e67e22'), (new CDiv('Expiring Soon'))->setAttribute('style', 'font-size:11px;color:#888;margin-top:2px;')]))->setAttribute('style', $cs),
 ]))->setAttribute('style', 'display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;');
 
-// ── Pie Charts (SVG, no JavaScript required) ──
+// ── Pie Charts — CSS conic-gradient via CDiv (Zabbix CTag escapes raw HTML/SVG) ──
 $build_pie_panel = static function (string $title, array $counts) use ($h): CDiv {
 	if (empty($counts)) {
 		return (new CDiv([
@@ -134,14 +134,22 @@ $build_pie_panel = static function (string $title, array $counts) use ($h): CDiv
 		]))->setAttribute('style', 'flex:1;min-width:280px;background:#fff;border:1px solid #d0d5e0;border-radius:6px;padding:16px 20px;');
 	}
 
-	$pie = HostDataBuilder::buildSvgPie($counts);
+	$pie          = HostDataBuilder::buildPieChartData($counts);
+	$legend_items = [];
+	foreach ($pie['legend'] as $item) {
+		$legend_items[] = (new CDiv([
+			(new CDiv())->setAttribute('style', 'width:14px;height:14px;border-radius:3px;background:' . $item['color'] . ';flex-shrink:0;'),
+			(new CDiv($h($item['label']) . ' (' . $item['count'] . ', ' . $item['pct'] . '%)'))
+				->setAttribute('style', 'font-size:12px;color:#333;'),
+		]))->setAttribute('style', 'display:flex;align-items:center;gap:8px;margin-bottom:6px;');
+	}
 
 	return (new CDiv([
 		(new CDiv([
-			(new CDiv($title))->setAttribute('style', 'font-size:13px;font-weight:bold;color:#1f4068;margin-bottom:10px;'),
-			new CTag('div', true, $pie['svg']),
-		]))->setAttribute('style', 'flex-shrink:0;'),
-		(new CDiv(new CTag('div', true, $pie['legend'])))->setAttribute('style', 'font-size:12px;'),
+			(new CDiv($title))->setAttribute('style', 'font-size:13px;font-weight:bold;color:#1f4068;margin-bottom:4px;text-align:center;'),
+			(new CDiv())->setAttribute('style', $pie['pie_style']),
+		]))->setAttribute('style', 'flex-shrink:0;display:flex;flex-direction:column;align-items:center;'),
+		(new CDiv($legend_items))->setAttribute('style', 'font-size:12px;'),
 	]))->setAttribute('style', 'flex:1;min-width:280px;background:#fff;border:1px solid #d0d5e0;border-radius:6px;padding:16px 20px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;');
 };
 

@@ -173,13 +173,13 @@ class HostDataBuilder {
 	}
 
 	/**
-	 * Build SVG pie chart + HTML legend from label => count map.
+	 * Pie chart data for Zabbix CDiv rendering (CTag escapes raw SVG/HTML).
 	 *
-	 * @return array{svg: string, legend: string}
+	 * @return array{pie_style: string, legend: list<array{label: string, count: int, pct: int, color: string}>}
 	 */
-	public static function buildSvgPie(array $counts, array $colors = []): array {
+	public static function buildPieChartData(array $counts, array $colors = []): array {
 		if (empty($counts)) {
-			return ['svg' => '', 'legend' => ''];
+			return ['pie_style' => '', 'legend' => []];
 		}
 
 		if (empty($colors)) {
@@ -188,45 +188,33 @@ class HostDataBuilder {
 		}
 
 		$total  = array_sum($counts);
-		$cx     = 100;
-		$cy     = 100;
-		$r      = 80;
-		$angle  = -M_PI / 2;
-		$paths  = '';
-		$legend = '';
+		$stops  = [];
+		$legend = [];
+		$start  = 0.0;
 		$idx    = 0;
 
 		foreach ($counts as $label => $count) {
-			$slice  = ($count / $total) * 2 * M_PI;
-			$x1     = $cx + $r * cos($angle);
-			$y1     = $cy + $r * sin($angle);
-			$x2     = $cx + $r * cos($angle + $slice);
-			$y2     = $cy + $r * sin($angle + $slice);
-			$large  = $slice > M_PI ? 1 : 0;
-			$color  = $colors[$idx % count($colors)];
-			$pct    = round(($count / $total) * 100);
-			$safe   = htmlspecialchars((string) $label, ENT_QUOTES, 'UTF-8');
+			$pct   = ($count / $total) * 100;
+			$end   = $start + $pct;
+			$color = $colors[$idx % count($colors)];
 
-			$paths .= '<path d="M ' . $cx . ' ' . $cy
-				. ' L ' . round($x1, 2) . ' ' . round($y1, 2)
-				. ' A ' . $r . ' ' . $r . ' 0 ' . $large . ' 1 '
-				. round($x2, 2) . ' ' . round($y2, 2)
-				. ' Z" fill="' . $color . '" stroke="#fff" stroke-width="2"/>';
+			$stops[] = $color . ' ' . round($start, 2) . '% ' . round($end, 2) . '%';
+			$legend[] = [
+				'label' => (string) $label,
+				'count' => (int) $count,
+				'pct'   => (int) round($pct),
+				'color' => $color,
+			];
 
-			$legend .= '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
-				. '<span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:'
-				. $color . ';flex-shrink:0;"></span>'
-				. '<span style="font-size:12px;color:#333;">' . $safe . ' (' . $count . ', ' . $pct . '%)</span>'
-				. '</div>';
-
-			$angle += $slice;
+			$start = $end;
 			$idx++;
 		}
 
-		$svg = '<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">'
-			. $paths . '</svg>';
+		$pie_style = 'width:180px;height:180px;border-radius:50%;'
+			. 'background:conic-gradient(' . implode(', ', $stops) . ');'
+			. 'border:3px solid #fff;box-shadow:0 0 0 1px #d0d5e0;margin-top:8px;';
 
-		return ['svg' => $svg, 'legend' => $legend];
+		return ['pie_style' => $pie_style, 'legend' => $legend];
 	}
 
 	/** Format location column: datacenter / rack / room fallback chain. */
