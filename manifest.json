@@ -1,0 +1,28 @@
+{
+    "manifest_version": 2.0,
+    "id": "zbx-enterprise-cmdb",
+    "name": "Enterprise CMDB",
+    "version": "1.0.1",
+    "author": "Vrishab Rayu",
+    "namespace": "EnterpriseCmdb",
+    "description": "Enterprise-grade CMDB with asset discovery, device classification, warranty tracking, rack mapping and lifecycle management.",
+    "actions": {
+        "cmdb.list": {
+            "class": "CControllerCmdbList",
+            "view": "cmdb.list",
+            "layout": "layout.htmlpage"
+        },
+        "cmdb.asset.edit": {
+            "class": "CControllerCmdbAssetEdit",
+            "view": "cmdb.asset.edit",
+            "layout": "layout.htmlpage"
+        },
+        "cmdb.asset.save": {
+            "class": "CControllerCmdbAssetSave",
+            "layout": "layout.htmlpage"
+        },
+        "cmdb.export": {
+            "class": "CControllerCmdbExport"
+        }
+    }
+}
