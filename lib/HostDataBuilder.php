@@ -56,14 +56,6 @@ class HostDataBuilder {
 
 		$warranty_info = AssetStore::getWarrantyStatus($asset['warranty_end'] ?? null);
 
-		// Post-build filters (device type, warranty status).
-		if (!empty($filters['device_type']) && $dev_type !== $filters['device_type']) {
-			return null;
-		}
-		if (!empty($filters['warranty_status']) && $warranty_info['status'] !== $filters['warranty_status']) {
-			return null;
-		}
-
 		$location   = self::display($asset['location'] ?? ($inv['location'] ?? null));
 		$rack       = self::display($asset['rack'] ?? null);
 		$rack_unit  = self::display($asset['rack_unit'] ?? null);
@@ -141,6 +133,100 @@ class HostDataBuilder {
 			}
 		}
 		return $rows;
+	}
+
+	/** Apply device-type and warranty filters to pre-built rows (charts use unfiltered rows). */
+	public static function applyFilters(array $rows, array $filters): array {
+		return array_values(array_filter($rows, static function (array $row) use ($filters): bool {
+			if (!empty($filters['device_type']) && ($row['device_type'] ?? '') !== $filters['device_type']) {
+				return false;
+			}
+			if (!empty($filters['warranty_status']) && ($row['warranty']['status'] ?? '') !== $filters['warranty_status']) {
+				return false;
+			}
+			return true;
+		}));
+	}
+
+	/** Count rows by a scalar column value. */
+	public static function countByField(array $rows, string $field): array {
+		if (empty($rows)) {
+			return [];
+		}
+		$counts = array_count_values(array_column($rows, $field));
+		arsort($counts);
+		return $counts;
+	}
+
+	/** OS breakdown for pie chart — treats empty OS as "Unknown". */
+	public static function buildOsCounts(array $rows): array {
+		$counts = [];
+		foreach ($rows as $row) {
+			$os = (string) ($row['os'] ?? '-');
+			if ($os === '-' || $os === '') {
+				$os = 'Unknown';
+			}
+			$counts[$os] = ($counts[$os] ?? 0) + 1;
+		}
+		arsort($counts);
+		return $counts;
+	}
+
+	/**
+	 * Build SVG pie chart + HTML legend from label => count map.
+	 *
+	 * @return array{svg: string, legend: string}
+	 */
+	public static function buildSvgPie(array $counts, array $colors = []): array {
+		if (empty($counts)) {
+			return ['svg' => '', 'legend' => ''];
+		}
+
+		if (empty($colors)) {
+			$colors = ['#1f4068','#27ae60','#e74c3c','#e67e22','#2980b9','#8e44ad',
+				'#16a085','#d35400','#7f8c8d','#f39c12','#1abc9c','#c0392b'];
+		}
+
+		$total  = array_sum($counts);
+		$cx     = 100;
+		$cy     = 100;
+		$r      = 80;
+		$angle  = -M_PI / 2;
+		$paths  = '';
+		$legend = '';
+		$idx    = 0;
+
+		foreach ($counts as $label => $count) {
+			$slice  = ($count / $total) * 2 * M_PI;
+			$x1     = $cx + $r * cos($angle);
+			$y1     = $cy + $r * sin($angle);
+			$x2     = $cx + $r * cos($angle + $slice);
+			$y2     = $cy + $r * sin($angle + $slice);
+			$large  = $slice > M_PI ? 1 : 0;
+			$color  = $colors[$idx % count($colors)];
+			$pct    = round(($count / $total) * 100);
+			$safe   = htmlspecialchars((string) $label, ENT_QUOTES, 'UTF-8');
+
+			$paths .= '<path d="M ' . $cx . ' ' . $cy
+				. ' L ' . round($x1, 2) . ' ' . round($y1, 2)
+				. ' A ' . $r . ' ' . $r . ' 0 ' . $large . ' 1 '
+				. round($x2, 2) . ' ' . round($y2, 2)
+				. ' Z" fill="' . $color . '" stroke="#fff" stroke-width="2"/>';
+
+			$legend .= '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+				. '<span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:'
+				. $color . ';flex-shrink:0;"></span>'
+				. '<span style="font-size:12px;color:#333;">' . $safe . ' (' . $count . ', ' . $pct . '%)</span>'
+				. '</div>';
+
+			$angle += $slice;
+			$idx++;
+		}
+
+		$svg = '<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">'
+			. $paths . '</svg>';
+
+		return ['svg' => $svg, 'legend' => $legend];
 	}
 
 	/** Format location column: datacenter / rack / room fallback chain. */

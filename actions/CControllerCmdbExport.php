@@ -67,7 +67,8 @@ class CControllerCmdbExport extends CController {
 			'warranty_status' => $warranty_status,
 			'interface_type'  => $iface_type,
 		];
-		$rows = HostDataBuilder::buildAll($hosts, $items, $assets, $filters);
+		$all_rows = HostDataBuilder::buildAll($hosts, $items, $assets, ['interface_type' => $iface_type]);
+		$rows     = HostDataBuilder::applyFilters($all_rows, $filters);
 
 		$filename = 'cmdb_export_' . date('Ymd_His') . '.csv';
 		header('Content-Type: text/csv; charset=utf-8');

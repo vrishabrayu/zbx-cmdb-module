@@ -38,7 +38,6 @@ class CControllerCmdbList extends CController {
 		$page            = max(1, (int) $this->getInput('page', 1));
 		$page_size       = 50;
 
-		// Groups for filter dropdown — empty array is valid when no host groups exist.
 		$groups = API::HostGroup()->get([
 			'output'     => ['groupid', 'name'],
 			'with_hosts' => true,
@@ -78,30 +77,33 @@ class CControllerCmdbList extends CController {
 		$items   = ItemFinder::batchGetItems($hostIds);
 		$assets  = AssetStore::getAll();
 
-		// Centralized row builder — every key the view expects is always present.
-		$filters = [
+		// Build all rows once; interface filter only at build time.
+		$iface_filter = ['interface_type' => $iface_type];
+		$all_rows     = HostDataBuilder::buildAll($hosts, $items, $assets, $iface_filter);
+
+		// Table/stats use device + warranty filters; charts/badges use full row set.
+		$table_filters = [
 			'device_type'     => $device_type,
 			'warranty_status' => $warranty_status,
-			'interface_type'  => $iface_type,
 		];
-		$all_data = HostDataBuilder::buildAll($hosts, $items, $assets, $filters);
+		$filtered_rows = HostDataBuilder::applyFilters($all_rows, $table_filters);
 
-		$total = count($all_data);
-		$up    = count(array_filter($all_data, fn($r) => ($r['availability']['status'] ?? '') === 'up'));
-		$down  = count(array_filter($all_data, fn($r) => ($r['availability']['status'] ?? '') === 'down'));
-		$exp_warranty = count(array_filter($all_data, fn($r) => ($r['warranty']['status'] ?? '') === 'expired'));
-		$exp_soon     = count(array_filter($all_data, fn($r) => ($r['warranty']['status'] ?? '') === 'expiring'));
+		$total = count($filtered_rows);
+		$up    = count(array_filter($filtered_rows, fn($r) => ($r['availability']['status'] ?? '') === 'up'));
+		$down  = count(array_filter($filtered_rows, fn($r) => ($r['availability']['status'] ?? '') === 'down'));
+		$exp_warranty = count(array_filter($filtered_rows, fn($r) => ($r['warranty']['status'] ?? '') === 'expired'));
+		$exp_soon     = count(array_filter($filtered_rows, fn($r) => ($r['warranty']['status'] ?? '') === 'expiring'));
 
-		$type_counts = $total > 0 ? array_count_values(array_column($all_data, 'device_type')) : [];
-		arsort($type_counts);
+		$type_counts = HostDataBuilder::countByField($all_rows, 'device_type');
+		$os_counts   = HostDataBuilder::buildOsCounts($all_rows);
 
 		$total_pages = max(1, (int) ceil($total / $page_size));
 		$page        = min($page, $total_pages);
-		$paged_data  = array_slice($all_data, ($page - 1) * $page_size, $page_size);
+		$paged_data  = array_slice($filtered_rows, ($page - 1) * $page_size, $page_size);
 
 		$this->setResponse(new CControllerResponseData([
 			'hosts'           => $paged_data,
-			'all_hosts'       => $all_data,
+			'all_hosts'       => $filtered_rows,
 			'groups'          => $groups,
 			'search'          => $search,
 			'groupid'         => $groupid,
@@ -114,6 +116,7 @@ class CControllerCmdbList extends CController {
 			'total_pages'     => $total_pages,
 			'stats'           => compact('total', 'up', 'down', 'exp_warranty', 'exp_soon'),
 			'type_counts'     => $type_counts,
+			'os_counts'       => $os_counts,
 		]));
 	}
 }

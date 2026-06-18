@@ -6,7 +6,10 @@
  * @var array $data
  */
 
-// Safe extraction — controller always sends these keys; defaults prevent view crashes on partial data.
+require_once dirname(__DIR__) . '/lib/HostDataBuilder.php';
+
+use Modules\EnterpriseCmdb\Lib\HostDataBuilder;
+
 $hosts           = $data['hosts'] ?? [];
 $groups          = $data['groups'] ?? [];
 $search          = (string) ($data['search'] ?? '');
@@ -20,22 +23,28 @@ $total_pages     = max(1, (int) ($data['total_pages'] ?? 1));
 $total           = (int) ($data['total'] ?? 0);
 $stats           = $data['stats'] ?? ['total' => 0, 'up' => 0, 'down' => 0, 'exp_warranty' => 0, 'exp_soon' => 0];
 $type_counts     = $data['type_counts'] ?? [];
+$os_counts       = $data['os_counts'] ?? [];
 
 /** Never pass null to htmlspecialchars (PHP 8.1+ deprecation / 8.4 fatal). */
 $h = static function (?string $value): string {
 	return htmlspecialchars($value ?? '', ENT_QUOTES, 'UTF-8');
 };
 
-$base_url = (new CUrl('zabbix.php'))->setArgument('action', 'cmdb.list');
-
-// Preserve active filters in pagination/export links.
-$filter_args = static function (CUrl $url) use ($search, $groupid, $device_type, $warranty_status, $iface_type): CUrl {
-	return $url
-		->setArgument('search', $search)
-		->setArgument('groupid', $groupid)
-		->setArgument('device_type', $device_type)
-		->setArgument('warranty_status', $warranty_status)
-		->setArgument('interface_type', $iface_type);
+/**
+ * Build list-page URL with optional filter overrides.
+ * Fixes badge links: overrides must not be overwritten by current filter state.
+ */
+$list_url = static function (array $overrides = []) use ($search, $groupid, $device_type, $warranty_status, $iface_type): string {
+	$url = (new CUrl('zabbix.php'))->setArgument('action', 'cmdb.list');
+	$url->setArgument('search', array_key_exists('search', $overrides) ? $overrides['search'] : $search);
+	$url->setArgument('groupid', array_key_exists('groupid', $overrides) ? $overrides['groupid'] : $groupid);
+	$url->setArgument('device_type', array_key_exists('device_type', $overrides) ? $overrides['device_type'] : $device_type);
+	$url->setArgument('warranty_status', array_key_exists('warranty_status', $overrides) ? $overrides['warranty_status'] : $warranty_status);
+	$url->setArgument('interface_type', array_key_exists('interface_type', $overrides) ? $overrides['interface_type'] : $iface_type);
+	if (array_key_exists('page', $overrides)) {
+		$url->setArgument('page', $overrides['page']);
+	}
+	return $url->getUrl();
 };
 
 // ── Filter Form ──
@@ -116,45 +125,50 @@ $summary = (new CDiv([
 	(new CDiv([(new CDiv((string) ($stats['exp_soon'] ?? 0)))->setAttribute('style', 'font-size:22px;font-weight:bold;color:#e67e22'), (new CDiv('Expiring Soon'))->setAttribute('style', 'font-size:11px;color:#888;margin-top:2px;')]))->setAttribute('style', $cs),
 ]))->setAttribute('style', 'display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;');
 
-// ── Device Type Bar Chart — guard empty type_counts (max([]) throws in PHP 8+) ──
-$chart_section = (new CDiv([
-	(new CDiv('Assets by Device Type'))->setAttribute('style', 'font-size:13px;font-weight:bold;color:#1f4068;margin-bottom:10px;'),
-	(new CDiv('No device types to display yet.'))->setAttribute('style', 'font-size:12px;color:#888;padding:8px 0;'),
-]))->setAttribute('style', 'background:#fff;border:1px solid #d0d5e0;border-radius:6px;padding:16px 20px;margin-bottom:16px;');
-
-if (!empty($type_counts)) {
-	$chart_labels = array_keys($type_counts);
-	$chart_data   = array_values($type_counts);
-	$chart_max    = max($chart_data) ?: 1;
-	$colors       = ['#1f4068','#27ae60','#e74c3c','#e67e22','#2980b9','#8e44ad','#16a085','#d35400','#c0392b','#2c3e50','#f39c12','#7f8c8d'];
-	$chart_rows   = [];
-	foreach ($chart_labels as $idx => $label) {
-		$val   = $chart_data[$idx] ?? 0;
-		$pct   = round(($val / $chart_max) * 100);
-		$color = $colors[$idx % count($colors)];
-		$chart_rows[] = (new CDiv([
-			(new CDiv($h($label)))->setAttribute('style', 'width:110px;font-size:12px;color:#444;text-align:right;'),
-			(new CDiv((new CDiv())->setAttribute('style', 'width:' . $pct . '%;background:' . $color . ';height:100%;border-radius:3px;')))->setAttribute('style', 'flex:1;background:#f0f4ff;border-radius:3px;height:22px;'),
-			(new CDiv((string) $val))->setAttribute('style', 'width:30px;font-size:12px;font-weight:bold;color:#333;'),
-		]))->setAttribute('style', 'display:flex;align-items:center;gap:10px;margin-bottom:8px;');
+// ── Pie Charts (SVG, no JavaScript required) ──
+$build_pie_panel = static function (string $title, array $counts) use ($h): CDiv {
+	if (empty($counts)) {
+		return (new CDiv([
+			(new CDiv($title))->setAttribute('style', 'font-size:13px;font-weight:bold;color:#1f4068;margin-bottom:10px;'),
+			(new CDiv('No data to display yet.'))->setAttribute('style', 'font-size:12px;color:#888;'),
+		]))->setAttribute('style', 'flex:1;min-width:280px;background:#fff;border:1px solid #d0d5e0;border-radius:6px;padding:16px 20px;');
 	}
-	$chart_section = (new CDiv([
-		(new CDiv('Assets by Device Type'))->setAttribute('style', 'font-size:13px;font-weight:bold;color:#1f4068;margin-bottom:10px;'),
-		(new CDiv($chart_rows))->setAttribute('style', 'padding:8px 0;'),
-	]))->setAttribute('style', 'background:#fff;border:1px solid #d0d5e0;border-radius:6px;padding:16px 20px;margin-bottom:16px;');
-}
 
-// ── Device Type Badges — always defined before page render ──
+	$pie = HostDataBuilder::buildSvgPie($counts);
+
+	return (new CDiv([
+		(new CDiv([
+			(new CDiv($title))->setAttribute('style', 'font-size:13px;font-weight:bold;color:#1f4068;margin-bottom:10px;'),
+			new CTag('div', true, $pie['svg']),
+		]))->setAttribute('style', 'flex-shrink:0;'),
+		(new CDiv(new CTag('div', true, $pie['legend'])))->setAttribute('style', 'font-size:12px;'),
+	]))->setAttribute('style', 'flex:1;min-width:280px;background:#fff;border:1px solid #d0d5e0;border-radius:6px;padding:16px 20px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;');
+};
+
+$charts_row = (new CDiv([
+	$build_pie_panel('Assets by Device Type', $type_counts),
+	$build_pie_panel('Assets by Operating System', $os_counts),
+]))->setAttribute('style', 'display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;');
+
+// ── Device Type Badges — toggle filter on click; URL uses override not stale state ──
 $badge_items = [];
 foreach ($type_counts as $t => $c) {
+	$is_active = ($device_type === $t);
 	$badge_items[] = (new CTag('a', true, $h($t) . ' (' . $c . ')'))
-		->setAttribute('href', $filter_args((clone $base_url)->setArgument('device_type', $t))->getUrl())
-		->setAttribute('style', 'display:inline-block;background:' . ($device_type === $t ? '#1f4068' : '#f0f4ff') . ';color:' . ($device_type === $t ? '#fff' : '#1f4068') . ';border:1px solid #c8d4f0;border-radius:4px;padding:4px 12px;font-size:12px;text-decoration:none;');
+		->setAttribute('href', $list_url(['device_type' => $is_active ? '' : $t, 'page' => 1]))
+		->setAttribute('style', 'display:inline-block;background:' . ($is_active ? '#1f4068' : '#f0f4ff') . ';color:' . ($is_active ? '#fff' : '#1f4068') . ';border:1px solid #c8d4f0;border-radius:4px;padding:4px 12px;font-size:12px;text-decoration:none;');
 }
 $badges = (new CDiv($badge_items))->setAttribute('style', 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;');
 
-// ── Toolbar — export URL carries current filters ──
-$export_url = $filter_args((new CUrl('zabbix.php'))->setArgument('action', 'cmdb.export'))->getUrl();
+// ── Toolbar ──
+$export_url = (new CUrl('zabbix.php'))
+	->setArgument('action', 'cmdb.export')
+	->setArgument('search', $search)
+	->setArgument('groupid', $groupid)
+	->setArgument('device_type', $device_type)
+	->setArgument('warranty_status', $warranty_status)
+	->setArgument('interface_type', $iface_type)
+	->getUrl();
 $toolbar = (new CDiv([
 	(new CDiv('Showing ' . count($hosts) . ' of ' . $total . ' assets'))->setAttribute('style', 'font-size:13px;color:#666;'),
 	(new CTag('a', true, 'Export CSV'))->setAttribute('href', $export_url)->setAttribute('style', 'padding:5px 14px;background:#27ae60;color:#fff;border-radius:3px;font-size:12px;text-decoration:none;font-weight:bold;'),
@@ -209,27 +223,26 @@ if ($total === 0) {
 	]));
 }
 
-// ── Pagination — preserve all filter query params ──
+// ── Pagination ──
 $pag_items = [];
 if ($page > 1) {
 	$pag_items[] = (new CTag('a', true, 'Prev'))
-		->setAttribute('href', $filter_args((clone $base_url)->setArgument('page', $page - 1))->getUrl())
+		->setAttribute('href', $list_url(['page' => $page - 1]))
 		->setAttribute('style', 'padding:4px 10px;border:1px solid #c8d0e0;border-radius:3px;font-size:12px;text-decoration:none;color:#333;background:#fff;');
 }
 $pag_items[] = (new CDiv('Page ' . $page . ' of ' . $total_pages))->setAttribute('style', 'font-size:12px;color:#666;padding:4px 8px;');
 if ($page < $total_pages) {
 	$pag_items[] = (new CTag('a', true, 'Next'))
-		->setAttribute('href', $filter_args((clone $base_url)->setArgument('page', $page + 1))->getUrl())
+		->setAttribute('href', $list_url(['page' => $page + 1]))
 		->setAttribute('style', 'padding:4px 10px;border:1px solid #c8d0e0;border-radius:3px;font-size:12px;text-decoration:none;color:#333;background:#fff;');
 }
 $pagination = (new CDiv($pag_items))->setAttribute('style', 'display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:12px;');
 
-// All UI blocks ($badges, $toolbar, $table, $pagination) are built above before render.
 (new CHtmlPage())
 	->setTitle('Enterprise CMDB')
 	->addItem($filter_form)
 	->addItem($summary)
-	->addItem($chart_section)
+	->addItem($charts_row)
 	->addItem($badges)
 	->addItem($toolbar)
 	->addItem($table)
